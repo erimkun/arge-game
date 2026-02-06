@@ -1,6 +1,7 @@
 /**
  * Custom Hook: useSocket
  * Single Responsibility: Socket.IO event yönetimi için hook
+ * Oda sistemi ile çalışır
  */
 
 import { useEffect, useMemo, useRef } from 'react';
@@ -51,22 +52,6 @@ export function useSocket() {
     });
 
     // Profil event'leri
-    socket.on('currentProfiles', (profiles) => {
-      const hydratedProfiles = profiles.map(enrichProfile);
-      dispatch({ type: ACTION_TYPES.SET_PROFILES, payload: hydratedProfiles });
-      // Oy sayılarını başlat
-      const initialVotes = {};
-      hydratedProfiles.forEach(profile => {
-        initialVotes[profile.id] = 0;
-      });
-      hydratedProfiles.forEach(profile => {
-        dispatch({
-          type: ACTION_TYPES.UPDATE_VOTE,
-          payload: { profileId: profile.id, count: 0 }
-        });
-      });
-    });
-
     socket.on('profileAdded', (profile) => {
       const hydrated = enrichProfile(profile);
       dispatch({ type: ACTION_TYPES.ADD_PROFILE, payload: hydrated });
@@ -89,32 +74,47 @@ export function useSocket() {
       dispatch({ type: ACTION_TYPES.SET_RESULTS, payload: results });
     });
 
-    // Uygulama sıfırlama event'i
-    socket.on('appReset', () => {
-      console.log('Uygulama sıfırlandı');
+    // Oda sıfırlama event'i
+    socket.on('roomReset', () => {
+      console.log('Oda sıfırlandı');
       dispatch({ type: ACTION_TYPES.RESET });
-      dispatch({ type: ACTION_TYPES.SET_STATE, payload: APP_STATES.JOIN });
+    });
+
+    // Odadan ayrılma event'i
+    socket.on('leftRoom', () => {
+      console.log('Odadan ayrıldı');
+      dispatch({ type: ACTION_TYPES.LEAVE_ROOM });
+    });
+
+    // Katılımcı ayrıldı event'i
+    socket.on('participantLeft', (data) => {
+      console.log('Bir katılımcı ayrıldı:', data.message);
+    });
+
+    // Katılımcı katıldı event'i
+    socket.on('participantJoined', (data) => {
+      console.log('Yeni katılımcı:', data.message);
     });
 
     // Hata event'i
     socket.on('error', (errorMessage) => {
       console.error('Socket hatası:', errorMessage);
-      // Hata mesajını kullanıcıya göstermek için state'e eklenebilir
     });
 
     // Cleanup
     return () => {
       socket.off('connect');
       socket.off('disconnect');
-      socket.off('currentProfiles');
       socket.off('profileAdded');
       socket.off('voteUpdate');
       socket.off('votingEnded');
-      socket.off('appReset');
+      socket.off('roomReset');
+      socket.off('leftRoom');
+      socket.off('participantLeft');
+      socket.off('participantJoined');
       socket.off('error');
     };
   }, [dispatch]);
 
   return socketRef.current;
 }
-

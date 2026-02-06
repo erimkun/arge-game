@@ -1,22 +1,26 @@
 /**
  * Main App Component
  * Single Responsibility: Uygulama durumuna göre doğru ekranı render etme
+ * Oda sistemi ile çalışır
  */
 
 import { AppStateProvider, useAppState, APP_STATES } from './contexts/AppStateContext';
 import { useSocket } from './hooks/useSocket';
+import LobbyScreen from './pages/LobbyScreen';
 import JoinScreen from './pages/JoinScreen';
 import VotingScreen from './pages/VotingScreen';
 import ResultsScreen from './pages/ResultsScreen';
 
 function AppContent() {
   const { state } = useAppState();
-  
+
   // Socket bağlantısını başlat
   useSocket();
 
   // Duruma göre ekranı render et
   switch (state.currentState) {
+    case APP_STATES.LOBBY:
+      return <LobbyScreen />;
     case APP_STATES.JOIN:
       return <JoinScreen />;
     case APP_STATES.VOTING:
@@ -24,7 +28,7 @@ function AppContent() {
     case APP_STATES.RESULTS:
       return <ResultsScreen />;
     default:
-      return <JoinScreen />;
+      return <LobbyScreen />;
   }
 }
 
@@ -37,4 +41,3 @@ function App() {
 }
 
 export default App;
-

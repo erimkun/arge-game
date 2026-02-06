@@ -1,6 +1,6 @@
 /**
  * Main Server Entry Point
- * Dependency Inversion: Servisleri dependency injection ile kullanır
+ * Oda sistemi ile çalışır - her oda izole bir oyun
  */
 
 const express = require('express');
@@ -9,8 +9,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 
 const config = require('./src/config/server.config');
-const ProfileService = require('./src/services/ProfileService');
-const VotingService = require('./src/services/VotingService');
+const RoomService = require('./src/services/RoomService');
 const SocketHandlers = require('./src/handlers/SocketHandlers');
 
 // Express uygulaması
@@ -31,10 +30,24 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Room info endpoint (debugging)
+app.get('/rooms', (req, res) => {
+  const rooms = [];
+  for (const [code, room] of roomService.rooms) {
+    rooms.push({
+      code,
+      profileCount: room.profiles.length,
+      participantCount: room.participants.size,
+      isVotingEnded: room.isVotingEnded,
+      createdAt: room.createdAt
+    });
+  }
+  res.json({ rooms, count: rooms.length });
+});
+
 // Servisleri oluştur (Dependency Injection)
-const profileService = new ProfileService();
-const votingService = new VotingService();
-const socketHandlers = new SocketHandlers(io, profileService, votingService);
+const roomService = new RoomService();
+const socketHandlers = new SocketHandlers(io, roomService);
 
 // Socket.IO bağlantı yönetimi
 io.on('connection', (socket) => {
@@ -46,6 +59,7 @@ server.listen(config.port, config.host, () => {
   console.log(`\n🚀 Backend sunucusu başlatıldı!`);
   console.log(`📍 Yerel: http://localhost:${config.port}`);
   console.log(`🌐 Ağ: http://[LAN_IP_ADRESİNİZ]:${config.port}`);
+  console.log(`🏠 Oda sistemi aktif!`);
   console.log(`\n✅ Sunucu hazır ve dinliyor...\n`);
 });
 

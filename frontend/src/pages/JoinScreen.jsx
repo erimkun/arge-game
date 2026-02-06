@@ -1,6 +1,7 @@
 /**
  * Join Screen Component
  * Single Responsibility: Kullanıcı profil oluşturma ekranı
+ * Oda sistemine entegre
  */
 
 import { useState, useEffect } from 'react';
@@ -9,39 +10,43 @@ import { useAppState, ACTION_TYPES, APP_STATES } from '../contexts/AppStateConte
 import { AVATARS } from '../utils/avatars';
 
 function JoinScreen() {
-  const { dispatch } = useAppState();
+  const { state, dispatch } = useAppState();
   const [characterName, setCharacterName] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState(null);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState('Bağlanılıyor...');
-
-  // Socket bağlantısını başlat ve durumunu dinle
-  useEffect(() => {
-    const socket = socketService.connect();
-
-    const handleConnect = () => {
-      setConnectionStatus('Bağlandı ✓');
-    };
-    const handleDisconnect = () => {
-      setConnectionStatus('Bağlantı kesildi ✗');
-    };
-
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
-
-    // İlk durumu kontrol et
-    if (socket.connected) {
-      setConnectionStatus('Bağlandı ✓');
-    }
-
-    return () => {
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
-    };
-  }, []);
+  const [copied, setCopied] = useState(false);
 
   const socket = socketService.getSocket();
+  const roomCode = state.currentRoom?.code;
+
+  // Oda kodu yoksa lobby'e geri dön
+  useEffect(() => {
+    if (!roomCode) {
+      dispatch({ type: ACTION_TYPES.SET_STATE, payload: APP_STATES.LOBBY });
+    }
+  }, [roomCode, dispatch]);
+
+  // Kodu kopyala
+  const handleCopyCode = async () => {
+    if (roomCode) {
+      try {
+        await navigator.clipboard.writeText(roomCode);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Kopyalama hatası:', err);
+      }
+    }
+  };
+
+  // Odadan ayrıl
+  const handleLeaveRoom = () => {
+    if (socket) {
+      socket.emit('leaveRoom');
+    }
+    dispatch({ type: ACTION_TYPES.LEAVE_ROOM });
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -65,7 +70,7 @@ function JoinScreen() {
     setIsCreating(true);
 
     try {
-      // Profil oluştur (avatar ile birlikte)
+      // Profil oluştur (oda bazlı)
       socket.emit('createProfile', {
         name: characterName.trim(),
         avatar: selectedAvatar.image,
@@ -96,14 +101,34 @@ function JoinScreen() {
     }
   };
 
+  if (!roomCode) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-2xl">
+        {/* Oda Kodu */}
+        <div className="bg-gradient-to-r from-purple-500 to-indigo-500 rounded-lg p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-purple-100 text-sm">Oda Kodu (Arkadaşlarınla Paylaş!)</p>
+              <p className="text-white text-3xl font-mono font-bold tracking-wider">{roomCode}</p>
+            </div>
+            <button
+              onClick={handleCopyCode}
+              className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg transition-colors"
+            >
+              {copied ? '✓ Kopyalandı!' : '📋 Kopyala'}
+            </button>
+          </div>
+        </div>
+
         <h1 className="text-3xl md:text-4xl font-bold text-indigo-700 text-center mb-2">
           🎭 Kent Teknolojileri ve ARGE Yarışması
         </h1>
         <p className="text-center text-gray-600 mb-6">
-          Aylık arge yarışmasına katılın ve kazanan olmak için şansınızı deneyin. Çünkü ERİM kazanacak zaten. siz şans denersiniz max xd.
+          Aylık arge yarışmasına katılın. Avatar seçin ve profilinizi oluşturun!
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -119,11 +144,10 @@ function JoinScreen() {
                   type="button"
                   onClick={() => setSelectedAvatar(avatar)}
                   disabled={isCreating}
-                  className={`relative p-2 rounded-lg border-2 transition-all duration-200 ${
-                    selectedAvatar?.id === avatar.id
+                  className={`relative p-2 rounded-lg border-2 transition-all duration-200 ${selectedAvatar?.id === avatar.id
                       ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-300'
                       : 'border-gray-200 hover:border-indigo-300 bg-white'
-                  } ${isCreating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                    } ${isCreating ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                 >
                   <img
                     src={avatar.image}
@@ -173,9 +197,13 @@ function JoinScreen() {
           <p className="mt-4 text-sm text-red-600 text-center">{error}</p>
         )}
 
-        <p className="mt-4 text-xs text-gray-500 text-center">
-          {connectionStatus}
-        </p>
+        {/* Odadan Ayrıl */}
+        <button
+          onClick={handleLeaveRoom}
+          className="w-full mt-4 text-gray-500 hover:text-gray-700 text-sm underline"
+        >
+          ← Odadan Ayrıl
+        </button>
       </div>
     </div>
   );

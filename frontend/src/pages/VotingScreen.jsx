@@ -1,27 +1,30 @@
 /**
  * Voting Screen Component
  * Single Responsibility: Oylama ekranı ve oy verme işlevselliği
+ * Oda sistemi ile çalışır
  */
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import socketService from '../services/socketService';
-import { useAppState } from '../contexts/AppStateContext';
+import { useAppState, ACTION_TYPES, APP_STATES } from '../contexts/AppStateContext';
 import VotingCarousel3D from '../components/carousel/VotingCarousel3D';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import CharacterModel from '../components/carousel/CharacterModel';
 
 function VotingScreen() {
-  const { state } = useAppState();
+  const { state, dispatch } = useAppState();
   const [hasVoted, setHasVoted] = useState(false);
   const [votedProfileId, setVotedProfileId] = useState(null);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [activeProfile, setActiveProfile] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   const socket = socketService.getSocket();
   const myProfile = state.myProfile;
   const myProfileId = myProfile?.id;
+  const roomCode = state.currentRoom?.code;
 
   const otherProfiles = useMemo(
     () => state.profiles.filter((profile) => profile.id !== myProfileId),
@@ -59,15 +62,51 @@ function VotingScreen() {
     setShowEndModal(false);
   }, [socket]);
 
+  const handleCopyCode = async () => {
+    if (roomCode) {
+      try {
+        await navigator.clipboard.writeText(roomCode);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Kopyalama hatası:', err);
+      }
+    }
+  };
+
+  const handleLeaveRoom = () => {
+    if (socket) {
+      socket.emit('leaveRoom');
+    }
+    dispatch({ type: ACTION_TYPES.LEAVE_ROOM });
+  };
+
   const votes = state.votes;
 
   return (
     <>
+      {/* Room Code Header */}
+      {roomCode && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-purple-600/90 backdrop-blur-sm px-4 py-2 rounded-xl shadow-lg">
+          <span className="text-white/70 text-sm">Oda:</span>
+          <span className="text-white font-mono font-bold text-lg">{roomCode}</span>
+          <button
+            onClick={handleCopyCode}
+            className="ml-2 text-white/80 hover:text-white text-sm"
+          >
+            {copied ? '✓' : '📋'}
+          </button>
+        </div>
+      )}
+
       {otherProfiles.length === 0 ? (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-100 p-4 flex items-center justify-center">
           <div className="rounded-3xl bg-white/80 p-10 text-center shadow-xl backdrop-blur max-w-md">
             <p className="text-lg font-semibold text-gray-600">
               Henüz başka karakter bulunmuyor. Yeni katılımcılar geldiğinde kartlar burada görünecek.
+            </p>
+            <p className="mt-4 text-sm text-gray-500">
+              Oda kodunu ({roomCode}) arkadaşlarınla paylaş!
             </p>
           </div>
         </div>
@@ -90,7 +129,18 @@ function VotingScreen() {
         className="fixed top-3 left-3 z-40 rounded-xl bg-indigo-600 px-4 py-2 font-semibold text-white shadow-lg transition hover:bg-indigo-700"
       >
         👤
-      </button>      {/* End Voting Button - Fixed Position */}
+      </button>
+
+      {/* Leave Room Button */}
+      <button
+        type="button"
+        onClick={handleLeaveRoom}
+        className="fixed bottom-3 left-3 z-40 rounded-xl bg-gray-600 px-4 py-2 text-sm text-white shadow-lg transition hover:bg-gray-700"
+      >
+        ← Çık
+      </button>
+
+      {/* End Voting Button - Fixed Position */}
       <button
         type="button"
         onClick={() => setShowEndModal(true)}
@@ -111,7 +161,7 @@ function VotingScreen() {
             >
               ✕
             </button>
-            
+
             {/* User Info Header */}
             <div className="absolute top-4 left-4 z-10 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-xl px-4 py-3 border-2 border-gray-700">
               <img
@@ -127,7 +177,7 @@ function VotingScreen() {
                 <p className="text-gray-400 text-sm">Senin Karakterin</p>
               </div>
             </div>
-            
+
             {/* 3D Model Viewer */}
             <div className="w-full h-full">
               {myProfile?.model ? (
@@ -140,7 +190,7 @@ function VotingScreen() {
                   <spotLight position={[5, 5, 5]} intensity={1} angle={0.3} penumbra={0.5} castShadow />
                   <spotLight position={[-5, 5, 5]} intensity={0.5} angle={0.3} penumbra={0.5} />
                   <spotLight position={[0, 5, -5]} intensity={0.3} angle={0.3} penumbra={0.5} color="#8ea5ff" />
-                  
+
                   <Suspense fallback={null}>
                     <CharacterModel
                       modelPath={myProfile.model}
