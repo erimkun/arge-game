@@ -2,6 +2,7 @@
  * Voting Screen Component
  * Single Responsibility: Oylama ekranı ve oy verme işlevselliği
  * Oda sistemi ile çalışır
+ * Negatif senaryolar için UI feedback içerir
  */
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
@@ -20,11 +21,18 @@ function VotingScreen() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [activeProfile, setActiveProfile] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [notification, setNotification] = useState(null);
 
   const socket = socketService.getSocket();
   const myProfile = state.myProfile;
   const myProfileId = myProfile?.id;
   const roomCode = state.currentRoom?.code;
+  const roomStats = state.roomStats;
+
+  // Minimum katılımcı kontrolü
+  const canEndVoting = roomStats?.canEndVoting ?? false;
+  const minProfilesRequired = roomStats?.minProfilesRequired ?? 2;
+  const profileCount = roomStats?.profileCount ?? 0;
 
   const otherProfiles = useMemo(
     () => state.profiles.filter((profile) => profile.id !== myProfileId),
@@ -43,6 +51,36 @@ function VotingScreen() {
     });
   }, [otherProfiles]);
 
+  // Socket event listeners for notifications
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleParticipantJoined = (data) => {
+      setNotification({ type: 'info', message: '🎉 Yeni katılımcı!' });
+      setTimeout(() => setNotification(null), 3000);
+    };
+
+    const handleParticipantLeft = (data) => {
+      setNotification({ type: 'warning', message: '👋 Bir katılımcı ayrıldı' });
+      setTimeout(() => setNotification(null), 3000);
+    };
+
+    const handleError = (errorMessage) => {
+      setNotification({ type: 'error', message: errorMessage });
+      setTimeout(() => setNotification(null), 5000);
+    };
+
+    socket.on('participantJoined', handleParticipantJoined);
+    socket.on('participantLeft', handleParticipantLeft);
+    socket.on('error', handleError);
+
+    return () => {
+      socket.off('participantJoined', handleParticipantJoined);
+      socket.off('participantLeft', handleParticipantLeft);
+      socket.off('error', handleError);
+    };
+  }, [socket]);
+
   const handleVote = useCallback(
     (profileId) => {
       if (hasVoted || profileId === myProfileId || !socket) {
@@ -58,9 +96,20 @@ function VotingScreen() {
 
   const handleEndVoting = useCallback(() => {
     if (!socket) return;
+
+    if (!canEndVoting) {
+      setNotification({
+        type: 'error',
+        message: `Oylama için en az ${minProfilesRequired} katılımcı gerekli!`
+      });
+      setTimeout(() => setNotification(null), 5000);
+      setShowEndModal(false);
+      return;
+    }
+
     socket.emit('endVoting');
     setShowEndModal(false);
-  }, [socket]);
+  }, [socket, canEndVoting, minProfilesRequired]);
 
   const handleCopyCode = async () => {
     if (roomCode) {
@@ -85,6 +134,16 @@ function VotingScreen() {
 
   return (
     <>
+      {/* Notification Toast */}
+      {notification && (
+        <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-lg animate-pulse ${notification.type === 'error' ? 'bg-red-500 text-white' :
+            notification.type === 'warning' ? 'bg-yellow-500 text-white' :
+              'bg-green-500 text-white'
+          }`}>
+          {notification.message}
+        </div>
+      )}
+
       {/* Room Code Header */}
       {roomCode && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-purple-600/90 backdrop-blur-sm px-4 py-2 rounded-xl shadow-lg">
@@ -96,17 +155,61 @@ function VotingScreen() {
           >
             {copied ? '✓' : '📋'}
           </button>
+          {/* Katılımcı sayısı */}
+          <span className="ml-3 text-white/60 text-sm">
+            👥 {profileCount}
+          </span>
         </div>
       )}
 
+      {/* Tek başına bekleme durumu */}
       {otherProfiles.length === 0 ? (
-        <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-100 p-4 flex items-center justify-center">
-          <div className="rounded-3xl bg-white/80 p-10 text-center shadow-xl backdrop-blur max-w-md">
-            <p className="text-lg font-semibold text-gray-600">
-              Henüz başka karakter bulunmuyor. Yeni katılımcılar geldiğinde kartlar burada görünecek.
+        <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-blue-900 p-4 flex items-center justify-center">
+          <div className="rounded-3xl bg-white/10 backdrop-blur-lg p-10 text-center shadow-xl max-w-lg border border-white/20">
+            {/* Bekleme animasyonu */}
+            <div className="flex justify-center mb-6">
+              <div className="relative">
+                <div className="w-20 h-20 border-4 border-purple-500/30 rounded-full"></div>
+                <div className="absolute top-0 left-0 w-20 h-20 border-4 border-purple-400 rounded-full border-t-transparent animate-spin"></div>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-3xl">
+                  ⏳
+                </div>
+              </div>
+            </div>
+
+            <h2 className="text-2xl font-bold text-white mb-4">
+              Arkadaşlarını Bekliyorsun...
+            </h2>
+
+            <p className="text-purple-200 mb-6">
+              Henüz başka katılımcı yok. Oda kodunu paylaşarak arkadaşlarını davet et!
             </p>
-            <p className="mt-4 text-sm text-gray-500">
-              Oda kodunu ({roomCode}) arkadaşlarınla paylaş!
+
+            {/* Oda kodu paylaşım */}
+            <div className="bg-white/10 rounded-xl p-4 mb-6">
+              <p className="text-purple-300 text-sm mb-2">Oda Kodu:</p>
+              <div className="flex items-center justify-center gap-3">
+                <span className="text-4xl font-mono font-bold text-white tracking-wider">
+                  {roomCode}
+                </span>
+                <button
+                  onClick={handleCopyCode}
+                  className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition-colors"
+                >
+                  {copied ? '✓ Kopyalandı' : '📋 Kopyala'}
+                </button>
+              </div>
+            </div>
+
+            {/* Minimum katılımcı uyarısı */}
+            <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3 mb-4">
+              <p className="text-yellow-200 text-sm">
+                ⚠️ Oylama için en az <strong>{minProfilesRequired}</strong> katılımcı gerekli
+              </p>
+            </div>
+
+            <p className="text-white/50 text-sm">
+              Katılımcılar geldikçe burada görünecekler
             </p>
           </div>
         </div>
@@ -144,7 +247,12 @@ function VotingScreen() {
       <button
         type="button"
         onClick={() => setShowEndModal(true)}
-        className="fixed top-3 right-3 z-40 rounded-xl bg-red-600 px-4 py-2 font-semibold text-white shadow-lg transition hover:bg-red-700"
+        disabled={!canEndVoting}
+        className={`fixed top-3 right-3 z-40 rounded-xl px-4 py-2 font-semibold text-white shadow-lg transition ${canEndVoting
+            ? 'bg-red-600 hover:bg-red-700'
+            : 'bg-gray-500 cursor-not-allowed'
+          }`}
+        title={!canEndVoting ? `En az ${minProfilesRequired} katılımcı gerekli` : ''}
       >
         🏁 Oylamayı Bitir
       </button>
@@ -228,8 +336,18 @@ function VotingScreen() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-xl font-bold text-gray-800">Oylamayı bitirmek istediğine emin misin?</h3>
+
+            {!canEndVoting && (
+              <div className="mt-3 p-3 bg-yellow-100 border border-yellow-300 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  ⚠️ Oylama için en az <strong>{minProfilesRequired}</strong> katılımcı gerekli.
+                  Şu an: <strong>{profileCount}</strong>
+                </p>
+              </div>
+            )}
+
             <p className="mt-3 text-sm text-gray-600">
-              Bu işlem tüm ağdaki oylama sürecini sonlandıracak ve sonuç ekranına geçilecektir.
+              Bu işlem odadaki oylama sürecini sonlandıracak ve sonuç ekranına geçilecektir.
             </p>
             <div className="mt-6 flex gap-4">
               <button
@@ -242,9 +360,13 @@ function VotingScreen() {
               <button
                 type="button"
                 onClick={handleEndVoting}
-                className="flex-1 rounded-xl bg-red-600 py-2 font-semibold text-white transition hover:bg-red-700"
+                disabled={!canEndVoting}
+                className={`flex-1 rounded-xl py-2 font-semibold text-white transition ${canEndVoting
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-gray-400 cursor-not-allowed'
+                  }`}
               >
-                Evet, bitir
+                {canEndVoting ? 'Evet, bitir' : 'Yeterli kişi yok'}
               </button>
             </div>
           </div>
@@ -255,4 +377,3 @@ function VotingScreen() {
 }
 
 export default VotingScreen;
-

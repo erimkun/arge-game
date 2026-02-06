@@ -2,6 +2,7 @@
  * Socket Event Handlers
  * Single Responsibility: Socket.IO event'lerini yönetir
  * Oda bazlı çalışır - her oda izole bir oyun
+ * Negatif senaryolar için güvenlik kontrolleri içerir
  */
 
 class SocketHandlers {
@@ -53,6 +54,11 @@ class SocketHandlers {
       this.handleEndVoting(socket);
     });
 
+    // Oda istatistikleri
+    socket.on('getRoomStats', () => {
+      this.handleGetRoomStats(socket);
+    });
+
     // Oda sıfırlama
     socket.on('resetRoom', () => {
       this.handleResetRoom(socket);
@@ -85,7 +91,8 @@ class SocketHandlers {
 
       socket.emit('roomCreated', {
         code: room.code,
-        message: 'Oda başarıyla oluşturuldu!'
+        message: 'Oda başarıyla oluşturuldu!',
+        stats: this.roomService.getRoomStats(room.code)
       });
     } catch (error) {
       console.error(`[${socket.id}] Oda oluşturma hatası:`, error);
@@ -100,41 +107,52 @@ class SocketHandlers {
    */
   handleJoinRoom(socket, roomCode) {
     try {
-      if (!roomCode || roomCode.length !== 6) {
+      if (!roomCode || typeof roomCode !== 'string') {
         socket.emit('error', 'Geçersiz oda kodu.');
         return;
       }
 
-      const room = this.roomService.joinRoom(roomCode.toUpperCase(), socket.id);
+      const trimmedCode = roomCode.trim().toUpperCase();
+      if (trimmedCode.length !== 6) {
+        socket.emit('error', 'Oda kodu 6 haneli olmalıdır.');
+        return;
+      }
 
-      if (!room) {
+      const result = this.roomService.joinRoom(trimmedCode, socket.id);
+
+      if (!result) {
         socket.emit('error', 'Oda bulunamadı. Kodu kontrol edin.');
         return;
       }
 
-      if (room.error) {
-        socket.emit('error', room.error);
+      if (result.error) {
+        socket.emit('error', result.error);
         return;
       }
 
       // Socket.IO room'una katıl
-      socket.join(room.code);
-      this.socketRooms.set(socket.id, room.code);
+      socket.join(result.code);
+      this.socketRooms.set(socket.id, result.code);
 
-      console.log(`[${socket.id}] Odaya katıldı: ${room.code}`);
+      console.log(`[${socket.id}] Odaya katıldı: ${result.code}`);
 
       // Mevcut profilleri ve oyları gönder
       socket.emit('roomJoined', {
-        code: room.code,
-        profiles: room.profiles,
-        votes: room.votes,
+        code: result.code,
+        profiles: result.profiles,
+        votes: result.votes,
+        stats: this.roomService.getRoomStats(result.code),
         message: 'Odaya başarıyla katıldınız!'
       });
 
       // Odadaki diğerlerine haber ver
-      socket.to(room.code).emit('participantJoined', {
+      socket.to(result.code).emit('participantJoined', {
+        participantCount: result.participants.size,
         message: 'Yeni bir katılımcı odaya katıldı.'
       });
+
+      // Odadaki herkese güncel stats gönder
+      this.broadcastRoomStats(result.code);
     } catch (error) {
       console.error(`[${socket.id}] Odaya katılma hatası:`, error);
       socket.emit('error', 'Odaya katılırken bir hata oluştu.');
@@ -160,12 +178,20 @@ class SocketHandlers {
         return;
       }
 
-      const profile = this.roomService.addProfile(roomCode, data);
+      if (data.name.trim().length > 50) {
+        socket.emit('error', 'Karakter adı 50 karakterden uzun olamaz.');
+        return;
+      }
+
+      const profile = this.roomService.addProfile(roomCode, socket.id, data);
 
       console.log(`[${socket.id}] [Room ${roomCode}] Profil oluşturuldu: ${profile.name}`);
 
       // Odadaki herkese yayınla
       this.io.to(roomCode).emit('profileAdded', profile);
+
+      // Güncel stats gönder
+      this.broadcastRoomStats(roomCode);
     } catch (error) {
       console.error(`[${socket.id}] Profil oluşturma hatası:`, error);
       socket.emit('error', error.message || 'Profil oluşturulurken bir hata oluştu.');
@@ -199,6 +225,15 @@ class SocketHandlers {
 
       // Odadaki herkese yayınla
       this.io.to(roomCode).emit('voteUpdate', voteResult);
+
+      // Oy kullanan kişiye onay
+      socket.emit('voteConfirmed', {
+        profileId,
+        message: 'Oyunuz başarıyla kaydedildi!'
+      });
+
+      // Güncel stats gönder
+      this.broadcastRoomStats(roomCode);
     } catch (error) {
       console.error(`[${socket.id}] Oy verme hatası:`, error);
       socket.emit('error', error.message || 'Oy verilirken bir hata oluştu.');
@@ -218,6 +253,13 @@ class SocketHandlers {
         return;
       }
 
+      // Önce yeterli katılımcı var mı kontrol et
+      const canEndCheck = this.roomService.canEndVoting(roomCode);
+      if (!canEndCheck.canEnd) {
+        socket.emit('error', `Oylama için en az ${canEndCheck.minRequired} katılımcı gerekli. Şu an: ${canEndCheck.profileCount}`);
+        return;
+      }
+
       console.log(`[${socket.id}] [Room ${roomCode}] Oylamayı bitirme isteği.`);
 
       const results = this.roomService.endVoting(roomCode);
@@ -229,6 +271,37 @@ class SocketHandlers {
     } catch (error) {
       console.error(`[${socket.id}] Oylamayı bitirme hatası:`, error);
       socket.emit('error', error.message || 'Oylama sonlandırılırken bir hata oluştu.');
+    }
+  }
+
+  /**
+   * Oda istatistikleri event handler'ı
+   * @param {Socket} socket - Socket instance
+   */
+  handleGetRoomStats(socket) {
+    try {
+      const roomCode = this.socketRooms.get(socket.id);
+
+      if (!roomCode) {
+        socket.emit('error', 'Bir odada değilsiniz.');
+        return;
+      }
+
+      const stats = this.roomService.getRoomStats(roomCode);
+      socket.emit('roomStats', stats);
+    } catch (error) {
+      console.error(`[${socket.id}] Room stats hatası:`, error);
+    }
+  }
+
+  /**
+   * Odadaki herkese güncel stats gönder
+   * @param {string} roomCode - Oda kodu
+   */
+  broadcastRoomStats(roomCode) {
+    const stats = this.roomService.getRoomStats(roomCode);
+    if (stats) {
+      this.io.to(roomCode).emit('roomStats', stats);
     }
   }
 
@@ -252,7 +325,8 @@ class SocketHandlers {
       // Odadaki herkese reset event'i gönder
       this.io.to(roomCode).emit('roomReset', {
         code: roomCode,
-        message: 'Oda sıfırlandı.'
+        message: 'Oda sıfırlandı. Yeni oylama başlayabilir.',
+        stats: this.roomService.getRoomStats(roomCode)
       });
 
       console.log(`[Room ${roomCode}] Oda sıfırlandı.`);
@@ -278,15 +352,25 @@ class SocketHandlers {
       socket.leave(roomCode);
       this.socketRooms.delete(socket.id);
 
-      const roomDeleted = this.roomService.leaveRoom(roomCode, socket.id);
+      const result = this.roomService.leaveRoom(roomCode, socket.id);
 
       socket.emit('leftRoom', { message: 'Odadan ayrıldınız.' });
 
-      if (!roomDeleted) {
+      if (!result.roomDeleted) {
         // Odadaki diğerlerine haber ver
+        if (result.profileRemoved) {
+          // Profil kaldırıldı, güncellenmiş profil listesini gönder
+          const profiles = this.roomService.getProfiles(roomCode);
+          this.io.to(roomCode).emit('profilesUpdated', profiles);
+        }
+
         socket.to(roomCode).emit('participantLeft', {
+          profileRemoved: result.profileRemoved,
           message: 'Bir katılımcı odadan ayrıldı.'
         });
+
+        // Güncel stats gönder
+        this.broadcastRoomStats(roomCode);
       }
 
       console.log(`[${socket.id}] Odadan ayrıldı: ${roomCode}`);
@@ -307,13 +391,23 @@ class SocketHandlers {
         socket.leave(roomCode);
         this.socketRooms.delete(socket.id);
 
-        const roomDeleted = this.roomService.leaveRoom(roomCode, socket.id);
+        const result = this.roomService.leaveRoom(roomCode, socket.id);
 
-        if (!roomDeleted) {
+        if (!result.roomDeleted) {
+          // Profil kaldırıldıysa güncellenmiş profil listesini gönder
+          if (result.profileRemoved) {
+            const profiles = this.roomService.getProfiles(roomCode);
+            this.io.to(roomCode).emit('profilesUpdated', profiles);
+          }
+
           // Odadaki diğerlerine haber ver
-          socket.to(roomCode).emit('participantLeft', {
+          this.io.to(roomCode).emit('participantLeft', {
+            profileRemoved: result.profileRemoved,
             message: 'Bir katılımcı bağlantısını kaybetti.'
           });
+
+          // Güncel stats gönder
+          this.broadcastRoomStats(roomCode);
         }
       }
 

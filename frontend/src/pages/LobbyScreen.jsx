@@ -1,170 +1,243 @@
 /**
  * Lobby Screen Component
  * Single Responsibility: Oda oluşturma ve katılma ekranı
+ * Negatif senaryolar için güvenlik kontrolleri içerir
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import socketService from '../services/socketService';
 import { useAppState, ACTION_TYPES } from '../contexts/AppStateContext';
+import { useSocket } from '../hooks/useSocket';
 
 function LobbyScreen() {
     const { dispatch } = useAppState();
+    const { connectionStatus, lastError, clearError } = useSocket();
     const [roomCode, setRoomCode] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
-    const [connectionStatus, setConnectionStatus] = useState('Bağlanılıyor...');
-
-    // Socket bağlantısını başlat
-    useState(() => {
-        const socket = socketService.connect();
-
-        const handleConnect = () => setConnectionStatus('Bağlandı ✓');
-        const handleDisconnect = () => setConnectionStatus('Bağlantı kesildi ✗');
-
-        socket.on('connect', handleConnect);
-        socket.on('disconnect', handleDisconnect);
-
-        if (socket.connected) {
-            setConnectionStatus('Bağlandı ✓');
-        }
-
-        return () => {
-            socket.off('connect', handleConnect);
-            socket.off('disconnect', handleDisconnect);
-        };
-    }, []);
 
     const socket = socketService.getSocket();
 
-    // Oda oluştur
-    const handleCreateRoom = async () => {
+    // Socket event listeners
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleRoomCreated = (data) => {
+            console.log('Oda oluşturuldu:', data);
+            setIsLoading(false);
+            dispatch({
+                type: ACTION_TYPES.SET_ROOM,
+                payload: { code: data.code }
+            });
+            if (data.stats) {
+                dispatch({ type: ACTION_TYPES.SET_ROOM_STATS, payload: data.stats });
+            }
+        };
+
+        const handleRoomJoined = (data) => {
+            console.log('Odaya katıldı:', data);
+            setIsLoading(false);
+            dispatch({
+                type: ACTION_TYPES.SET_ROOM,
+                payload: { code: data.code }
+            });
+            if (data.stats) {
+                dispatch({ type: ACTION_TYPES.SET_ROOM_STATS, payload: data.stats });
+            }
+            // Mevcut profilleri yükle
+            if (data.profiles && data.profiles.length > 0) {
+                dispatch({ type: ACTION_TYPES.SET_PROFILES, payload: data.profiles });
+            }
+        };
+
+        const handleError = (errorMessage) => {
+            console.error('Socket hatası:', errorMessage);
+            setError(errorMessage);
+            setIsLoading(false);
+        };
+
+        socket.on('roomCreated', handleRoomCreated);
+        socket.on('roomJoined', handleRoomJoined);
+        socket.on('error', handleError);
+
+        return () => {
+            socket.off('roomCreated', handleRoomCreated);
+            socket.off('roomJoined', handleRoomJoined);
+            socket.off('error', handleError);
+        };
+    }, [socket, dispatch]);
+
+    // Connection status'a göre lastError'u göster
+    useEffect(() => {
+        if (lastError) {
+            setError(lastError);
+        }
+    }, [lastError]);
+
+    const handleCreateRoom = () => {
+        if (!socket || !socket.connected) {
+            setError('Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin.');
+            return;
+        }
+
         setError('');
+        setIsLoading(true);
+        socket.emit('createRoom');
+    };
+
+    const handleJoinRoom = (e) => {
+        e.preventDefault();
 
         if (!socket || !socket.connected) {
             setError('Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin.');
             return;
         }
 
-        setIsLoading(true);
+        const trimmedCode = roomCode.trim().toUpperCase();
 
-        socket.emit('createRoom');
-
-        socket.once('roomCreated', (data) => {
-            console.log('Oda oluşturuldu:', data);
-            dispatch({ type: ACTION_TYPES.SET_ROOM, payload: { code: data.code } });
-            setIsLoading(false);
-        });
-
-        socket.once('error', (errorMessage) => {
-            setError(errorMessage);
-            setIsLoading(false);
-        });
-    };
-
-    // Odaya katıl
-    const handleJoinRoom = async (e) => {
-        e.preventDefault();
-        setError('');
-
-        if (!roomCode.trim()) {
-            setError('Oda kodu giriniz.');
+        if (!trimmedCode) {
+            setError('Oda kodu boş olamaz.');
             return;
         }
 
-        if (roomCode.length !== 6) {
+        if (trimmedCode.length !== 6) {
             setError('Oda kodu 6 haneli olmalıdır.');
             return;
         }
 
-        if (!socket || !socket.connected) {
-            setError('Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin.');
+        // Geçersiz karakterleri kontrol et
+        const validChars = /^[A-Z0-9]+$/;
+        if (!validChars.test(trimmedCode)) {
+            setError('Oda kodu sadece harf ve rakam içerebilir.');
             return;
         }
 
+        setError('');
         setIsLoading(true);
+        socket.emit('joinRoom', trimmedCode);
+    };
 
-        socket.emit('joinRoom', roomCode.toUpperCase());
+    const handleInputChange = (e) => {
+        const value = e.target.value.toUpperCase().slice(0, 6);
+        setRoomCode(value);
+        if (error) setError('');
+    };
 
-        socket.once('roomJoined', (data) => {
-            console.log('Odaya katıldı:', data);
-            dispatch({ type: ACTION_TYPES.SET_ROOM, payload: { code: data.code } });
-            dispatch({ type: ACTION_TYPES.SET_PROFILES, payload: data.profiles || [] });
-            // Votes objesi varsa yükle
-            if (data.votes) {
-                Object.entries(data.votes).forEach(([profileId, count]) => {
-                    dispatch({ type: ACTION_TYPES.UPDATE_VOTE, payload: { profileId, count } });
-                });
-            }
-            setIsLoading(false);
-        });
-
-        socket.once('error', (errorMessage) => {
-            setError(errorMessage);
-            setIsLoading(false);
-        });
+    // Bağlantı durumu göstergesi
+    const renderConnectionStatus = () => {
+        if (connectionStatus === 'connected') {
+            return (
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 px-3 py-1 rounded-full text-sm">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    Bağlandı
+                </div>
+            );
+        }
+        if (connectionStatus === 'connecting') {
+            return (
+                <div className="flex items-center gap-2 text-yellow-600 bg-yellow-50 px-3 py-1 rounded-full text-sm">
+                    <div className="w-2 h-2 bg-yellow-500 rounded-full animate-ping"></div>
+                    Bağlanıyor...
+                </div>
+            );
+        }
+        return (
+            <div className="flex items-center gap-2 text-red-600 bg-red-50 px-3 py-1 rounded-full text-sm">
+                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                Bağlantı kesildi
+            </div>
+        );
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-blue-900 flex items-center justify-center p-4">
+        <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-blue-900 flex items-center justify-center p-4">
             <div className="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-8 w-full max-w-md border border-white/20">
-                <h1 className="text-4xl font-bold text-white text-center mb-2">
-                    🎭 ARGE Yarışması
-                </h1>
-                <p className="text-center text-purple-200 mb-8">
-                    Kent Teknolojileri Aylık Yarışma
-                </p>
-
-                {/* Oda Oluştur */}
-                <button
-                    onClick={handleCreateRoom}
-                    disabled={isLoading}
-                    className="w-full bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 disabled:opacity-50 text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 transform hover:scale-[1.02] shadow-lg mb-6"
-                >
-                    {isLoading ? '⏳ Oda Oluşturuluyor...' : '🏠 Yeni Oda Oluştur'}
-                </button>
-
-                {/* Ayırıcı */}
-                <div className="flex items-center mb-6">
-                    <div className="flex-1 border-t border-white/30"></div>
-                    <span className="px-4 text-white/60 text-sm">veya</span>
-                    <div className="flex-1 border-t border-white/30"></div>
+                {/* Connection Status */}
+                <div className="flex justify-center mb-6">
+                    {renderConnectionStatus()}
                 </div>
 
-                {/* Odaya Katıl */}
+                {/* Logo / Title */}
+                <div className="text-center mb-8">
+                    <h1 className="text-4xl font-bold text-white mb-2">
+                        🎭 Avatar Yarışması
+                    </h1>
+                    <p className="text-purple-200">
+                        Kent Teknolojileri ve ARGE
+                    </p>
+                </div>
+
+                {/* Error Message */}
+                {error && (
+                    <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl">
+                        <div className="flex items-center justify-between">
+                            <p className="text-red-200 text-sm">{error}</p>
+                            <button
+                                onClick={() => { setError(''); clearError(); }}
+                                className="text-red-300 hover:text-white ml-2"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Create Room Button */}
+                <button
+                    onClick={handleCreateRoom}
+                    disabled={isLoading || connectionStatus !== 'connected'}
+                    className="w-full bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 disabled:from-gray-500 disabled:to-gray-600 text-white font-bold py-4 px-6 rounded-xl transition-all duration-200 mb-6 shadow-lg hover:shadow-xl disabled:cursor-not-allowed"
+                >
+                    {isLoading ? (
+                        <span className="flex items-center justify-center gap-2">
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            İşleniyor...
+                        </span>
+                    ) : (
+                        '🚀 Yeni Oda Oluştur'
+                    )}
+                </button>
+
+                {/* Divider */}
+                <div className="flex items-center gap-4 my-6">
+                    <div className="flex-1 h-px bg-white/20"></div>
+                    <span className="text-white/50 text-sm">veya</span>
+                    <div className="flex-1 h-px bg-white/20"></div>
+                </div>
+
+                {/* Join Room Form */}
                 <form onSubmit={handleJoinRoom} className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-purple-200 mb-2">
-                            Oda Kodunu Girin:
+                        <label className="block text-purple-200 text-sm font-medium mb-2">
+                            Oda Kodunu Gir
                         </label>
                         <input
                             type="text"
                             value={roomCode}
-                            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                            onChange={handleInputChange}
                             placeholder="ABC123"
+                            className="w-full bg-white/10 border border-white/20 text-white text-center text-2xl font-mono font-bold tracking-widest py-4 px-4 rounded-xl placeholder-white/30 focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-400/50 uppercase"
                             maxLength={6}
                             disabled={isLoading}
-                            className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/30 text-white text-center text-2xl font-mono tracking-wider placeholder-white/40 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/50 outline-none transition-all uppercase"
+                            autoComplete="off"
                         />
+                        <p className="text-white/40 text-xs mt-2 text-center">
+                            6 haneli oda kodunu arkadaşından iste
+                        </p>
                     </div>
+
                     <button
                         type="submit"
-                        disabled={isLoading || !roomCode.trim()}
-                        className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 transform hover:scale-[1.02] shadow-lg"
+                        disabled={isLoading || !roomCode.trim() || connectionStatus !== 'connected'}
+                        className="w-full bg-white/20 hover:bg-white/30 disabled:bg-white/5 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 border border-white/30 disabled:border-white/10 disabled:cursor-not-allowed"
                     >
-                        {isLoading ? '⏳ Katılınıyor...' : '🚪 Odaya Katıl'}
+                        {isLoading ? 'Katılınıyor...' : '🔗 Odaya Katıl'}
                     </button>
                 </form>
 
-                {/* Hata Mesajı */}
-                {error && (
-                    <div className="mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg">
-                        <p className="text-sm text-red-200 text-center">{error}</p>
-                    </div>
-                )}
-
-                {/* Bağlantı Durumu */}
-                <p className="mt-6 text-xs text-white/40 text-center">
-                    {connectionStatus}
+                {/* Footer */}
+                <p className="text-center text-white/30 text-xs mt-8">
+                    Aynı ağdaki arkadaşlarınla oyna
                 </p>
             </div>
         </div>

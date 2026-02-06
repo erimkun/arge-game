@@ -1,7 +1,7 @@
 /**
  * App State Context
  * Single Responsibility: Global uygulama durumu yönetimi
- * Oda sistemi desteği ile
+ * Oda sistemi ve negatif senaryo desteği ile
  */
 
 import { createContext, useContext, useReducer } from 'react';
@@ -18,6 +18,7 @@ export const APP_STATES = {
 const initialState = {
   currentState: APP_STATES.LOBBY,  // Başlangıç: Lobby
   currentRoom: null,               // { code: 'ABC123' }
+  roomStats: null,                 // Oda istatistikleri
   myProfile: null,
   profiles: [],
   votes: {},
@@ -28,6 +29,7 @@ const initialState = {
 export const ACTION_TYPES = {
   SET_STATE: 'SET_STATE',
   SET_ROOM: 'SET_ROOM',
+  SET_ROOM_STATS: 'SET_ROOM_STATS',
   SET_MY_PROFILE: 'SET_MY_PROFILE',
   SET_PROFILES: 'SET_PROFILES',
   ADD_PROFILE: 'ADD_PROFILE',
@@ -50,6 +52,9 @@ function appReducer(state, action) {
         currentState: APP_STATES.JOIN  // Odaya katılınca JOIN'e geç
       };
 
+    case ACTION_TYPES.SET_ROOM_STATS:
+      return { ...state, roomStats: action.payload };
+
     case ACTION_TYPES.SET_MY_PROFILE:
       return { ...state, myProfile: action.payload };
 
@@ -57,6 +62,10 @@ function appReducer(state, action) {
       return { ...state, profiles: action.payload };
 
     case ACTION_TYPES.ADD_PROFILE:
+      // Profil zaten varsa ekleme
+      if (state.profiles.find(p => p.id === action.payload.id)) {
+        return state;
+      }
       return {
         ...state,
         profiles: [...state.profiles, action.payload]
