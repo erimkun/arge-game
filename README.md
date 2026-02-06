@@ -120,6 +120,31 @@ Bu proje SOLID prensiplerine uygun olarak tasarlanmıştır:
 - `votingEnded`: Oylama sonlandığında sonuçları gönderme
 - `error`: Hata durumlarında bildirim
 
+## ☁️ Cloud Deployment (Vercel + Railway)
+
+Bu uygulama Socket.IO WebSocket kullandığı için Vercel tek başına yeterli değildir.
+
+### Backend → Railway
+
+1. [Railway.app](https://railway.app) hesabı oluştur
+2. GitHub repo'sunu bağla
+3. Root Directory: `backend`
+4. Environment Variables:
+   ```
+   PORT=3001
+   CORS_ORIGIN=https://your-app.vercel.app
+   ```
+
+### Frontend → Vercel
+
+1. [Vercel](https://vercel.com) hesabı oluştur
+2. GitHub repo'sunu import et
+3. Root Directory: `frontend`
+4. Environment Variables:
+   ```
+   VITE_BACKEND_URL=https://your-backend.railway.app
+   ```
+
 ## 📝 Notlar
 
 - Veriler in-memory olarak saklanır (sunucu yeniden başlatıldığında sıfırlanır)
