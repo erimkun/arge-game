@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import socketService from '../services/socketService';
 import { useAppState, ACTION_TYPES } from '../contexts/AppStateContext';
 import { useSocket } from '../hooks/useSocket';
+import { playSound } from '../utils/sound';
 
 function LobbyScreen() {
     const { dispatch } = useAppState();
@@ -24,6 +25,7 @@ function LobbyScreen() {
 
         const handleRoomCreated = (data) => {
             console.log('Oda oluşturuldu:', data);
+            playSound.join();
             setIsLoading(false);
             dispatch({
                 type: ACTION_TYPES.SET_ROOM,
@@ -36,6 +38,7 @@ function LobbyScreen() {
 
         const handleRoomJoined = (data) => {
             console.log('Odaya katıldı:', data);
+            playSound.join();
             setIsLoading(false);
             dispatch({
                 type: ACTION_TYPES.SET_ROOM,
@@ -52,6 +55,7 @@ function LobbyScreen() {
 
         const handleError = (errorMessage) => {
             console.error('Socket hatası:', errorMessage);
+            playSound.error();
             setError(errorMessage);
             setIsLoading(false);
         };
@@ -75,7 +79,9 @@ function LobbyScreen() {
     }, [lastError]);
 
     const handleCreateRoom = () => {
+        playSound.click();
         if (!socket || !socket.connected) {
+            playSound.error();
             setError('Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin.');
             return;
         }
@@ -87,8 +93,10 @@ function LobbyScreen() {
 
     const handleJoinRoom = (e) => {
         e.preventDefault();
+        playSound.click();
 
         if (!socket || !socket.connected) {
+            playSound.error();
             setError('Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin.');
             return;
         }
@@ -150,8 +158,11 @@ function LobbyScreen() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-blue-900 flex items-center justify-center p-4">
-            <div className="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-8 w-full max-w-md border border-white/20">
+        <div className="flex-1 flex items-center justify-center p-4">
+            <div className="glass-card rounded-3xl p-8 w-full max-w-md backdrop-blur-xl border border-white/20 relative overflow-hidden group">
+                {/* Decorative Elements */}
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-purple-500 to-transparent opacity-50"></div>
+
                 {/* Connection Status */}
                 <div className="flex justify-center mb-6">
                     {renderConnectionStatus()}

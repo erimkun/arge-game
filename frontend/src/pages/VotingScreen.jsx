@@ -12,6 +12,8 @@ import VotingCarousel3D from '../components/carousel/VotingCarousel3D';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import CharacterModel from '../components/carousel/CharacterModel';
+import confetti from 'canvas-confetti';
+import { playSound } from '../utils/sound';
 
 function VotingScreen() {
   const { state, dispatch } = useAppState();
@@ -56,6 +58,7 @@ function VotingScreen() {
     if (!socket) return;
 
     const handleParticipantJoined = (data) => {
+      playSound.join();
       setNotification({ type: 'info', message: '🎉 Yeni katılımcı!' });
       setTimeout(() => setNotification(null), 3000);
     };
@@ -66,6 +69,7 @@ function VotingScreen() {
     };
 
     const handleError = (errorMessage) => {
+      playSound.error();
       setNotification({ type: 'error', message: errorMessage });
       setTimeout(() => setNotification(null), 5000);
     };
@@ -87,12 +91,25 @@ function VotingScreen() {
         return;
       }
 
+      playSound.vote();
+      // Confetti burst
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.8 },
+        colors: ['#8B5CF6', '#EC4899', '#FFFFFF']
+      });
+
       socket.emit('vote', profileId);
       setHasVoted(true);
       setVotedProfileId(profileId);
+
+      setNotification({ type: 'success', message: 'Oy kullanıldı! 🗳️' });
+      setTimeout(() => setNotification(null), 3000);
     },
     [hasVoted, myProfileId, socket]
   );
+
 
   const handleEndVoting = useCallback(() => {
     if (!socket) return;
@@ -137,8 +154,8 @@ function VotingScreen() {
       {/* Notification Toast */}
       {notification && (
         <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-lg animate-pulse ${notification.type === 'error' ? 'bg-red-500 text-white' :
-            notification.type === 'warning' ? 'bg-yellow-500 text-white' :
-              'bg-green-500 text-white'
+          notification.type === 'warning' ? 'bg-yellow-500 text-white' :
+            'bg-green-500 text-white'
           }`}>
           {notification.message}
         </div>
@@ -164,39 +181,39 @@ function VotingScreen() {
 
       {/* Tek başına bekleme durumu */}
       {otherProfiles.length === 0 ? (
-        <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-blue-900 p-4 flex items-center justify-center">
-          <div className="rounded-3xl bg-white/10 backdrop-blur-lg p-10 text-center shadow-xl max-w-lg border border-white/20">
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="glass-card rounded-3xl p-10 text-center max-w-lg relative overflow-hidden animate-float">
             {/* Bekleme animasyonu */}
             <div className="flex justify-center mb-6">
               <div className="relative">
                 <div className="w-20 h-20 border-4 border-purple-500/30 rounded-full"></div>
                 <div className="absolute top-0 left-0 w-20 h-20 border-4 border-purple-400 rounded-full border-t-transparent animate-spin"></div>
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-3xl">
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-3xl animate-bounce">
                   ⏳
                 </div>
               </div>
             </div>
 
-            <h2 className="text-2xl font-bold text-white mb-4">
+            <h2 className="text-2xl font-bold text-white mb-4 text-shadow">
               Arkadaşlarını Bekliyorsun...
             </h2>
 
-            <p className="text-purple-200 mb-6">
+            <p className="text-purple-200 mb-6 font-medium">
               Henüz başka katılımcı yok. Oda kodunu paylaşarak arkadaşlarını davet et!
             </p>
 
             {/* Oda kodu paylaşım */}
-            <div className="bg-white/10 rounded-xl p-4 mb-6">
-              <p className="text-purple-300 text-sm mb-2">Oda Kodu:</p>
+            <div className="bg-black/20 rounded-xl p-4 mb-6 border border-white/10">
+              <p className="text-purple-300 text-sm mb-2 uppercase tracking-widest text-xs">Oda Kodu</p>
               <div className="flex items-center justify-center gap-3">
-                <span className="text-4xl font-mono font-bold text-white tracking-wider">
+                <span className="text-4xl font-mono font-bold text-white tracking-wider text-glow">
                   {roomCode}
                 </span>
                 <button
                   onClick={handleCopyCode}
-                  className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition-colors"
+                  className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors border border-white/10"
                 >
-                  {copied ? '✓ Kopyalandı' : '📋 Kopyala'}
+                  {copied ? '✓' : '📋'}
                 </button>
               </div>
             </div>
@@ -249,8 +266,8 @@ function VotingScreen() {
         onClick={() => setShowEndModal(true)}
         disabled={!canEndVoting}
         className={`fixed top-3 right-3 z-40 rounded-xl px-4 py-2 font-semibold text-white shadow-lg transition ${canEndVoting
-            ? 'bg-red-600 hover:bg-red-700'
-            : 'bg-gray-500 cursor-not-allowed'
+          ? 'bg-red-600 hover:bg-red-700'
+          : 'bg-gray-500 cursor-not-allowed'
           }`}
         title={!canEndVoting ? `En az ${minProfilesRequired} katılımcı gerekli` : ''}
       >
@@ -362,8 +379,8 @@ function VotingScreen() {
                 onClick={handleEndVoting}
                 disabled={!canEndVoting}
                 className={`flex-1 rounded-xl py-2 font-semibold text-white transition ${canEndVoting
-                    ? 'bg-red-600 hover:bg-red-700'
-                    : 'bg-gray-400 cursor-not-allowed'
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-gray-400 cursor-not-allowed'
                   }`}
               >
                 {canEndVoting ? 'Evet, bitir' : 'Yeterli kişi yok'}
