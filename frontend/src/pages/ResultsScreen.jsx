@@ -1,6 +1,7 @@
 /**
  * Results Screen Component
  * Single Responsibility: Oylama sonuçlarını gösterme
+ * Oda sistemi ile çalışır
  */
 
 import { useAppState, ACTION_TYPES, APP_STATES } from '../contexts/AppStateContext';
@@ -10,6 +11,7 @@ function ResultsScreen() {
   const { state, dispatch } = useAppState();
   const { results } = state;
   const socket = socketService.getSocket();
+  const roomCode = state.currentRoom?.code;
 
   if (!results) {
     return (
@@ -19,7 +21,7 @@ function ResultsScreen() {
     );
   }
 
-  const { winners, finalVotes, totalParticipants, totalVotesCast } = results;
+  const { winners, finalVotes, totalParticipants, totalVotesCast, isTie } = results;
 
   // Profilleri oy sayısına göre sırala
   const sortedProfiles = state.profiles
@@ -29,18 +31,19 @@ function ResultsScreen() {
     }))
     .sort((a, b) => b.votes - a.votes);
 
-  const handleReset = () => {
+  // Yeni oylama başlat (aynı odada)
+  const handleNewVoting = () => {
     if (socket) {
-      // Backend'e reset isteği gönder
-      socket.emit('resetApp');
-      // Frontend state'i de sıfırla (appReset event'i geldiğinde otomatik sıfırlanacak ama hemen de sıfırlayalım)
-      dispatch({ type: ACTION_TYPES.RESET });
-      dispatch({ type: ACTION_TYPES.SET_STATE, payload: APP_STATES.JOIN });
-    } else {
-      // Socket yoksa sadece frontend'i sıfırla
-      dispatch({ type: ACTION_TYPES.RESET });
-      dispatch({ type: ACTION_TYPES.SET_STATE, payload: APP_STATES.JOIN });
+      socket.emit('resetRoom');
     }
+  };
+
+  // Odadan ayrıl
+  const handleLeaveRoom = () => {
+    if (socket) {
+      socket.emit('leaveRoom');
+    }
+    dispatch({ type: ACTION_TYPES.LEAVE_ROOM });
   };
 
   return (
@@ -126,19 +129,33 @@ function ResultsScreen() {
           </ul>
         </div>
 
-        {/* Reset Button */}
-        <div className="text-center">
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button
-            onClick={handleReset}
+            onClick={handleNewVoting}
             className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-8 rounded-xl transition-colors duration-200 shadow-lg hover:shadow-xl"
           >
-            🔄 Yeni Bir Oylama Başlat
+            🔄 Yeni Oylama (Aynı Oda)
+          </button>
+          <button
+            onClick={handleLeaveRoom}
+            className="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-xl transition-colors duration-200"
+          >
+            🚪 Odadan Ayrıl
           </button>
         </div>
+
+        {/* Room Code Footer */}
+        {roomCode && (
+          <p className="text-center text-gray-500 text-sm mt-4">
+            Oda: <span className="font-mono font-bold">{roomCode}</span>
+          </p>
+        )}
       </div>
     </div>
   );
 }
 
 export default ResultsScreen;
+
 
