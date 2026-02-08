@@ -9,15 +9,29 @@ import socketService from '../services/socketService';
 import { useAppState, ACTION_TYPES } from '../contexts/AppStateContext';
 import { useSocket } from '../hooks/useSocket';
 import { playSound } from '../utils/sound';
+import { copyInviteLink } from '../utils/ExportUtils';
 
 function LobbyScreen() {
     const { dispatch } = useAppState();
-    const { connectionStatus, lastError, clearError } = useSocket();
+    const { connectionStatus, lastError, clearError } = useSocket({ listenToGlobalEvents: false });
     const [roomCode, setRoomCode] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+    const [roomPassword, setRoomPassword] = useState('');
+    const [participantLimit, setParticipantLimit] = useState(50);
+    const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false);
 
     const socket = socketService.getSocket();
+
+    // URL'den oda kodu oku
+    useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomFromUrl = urlParams.get('room');
+        if (roomFromUrl && roomFromUrl.length === 6) {
+            setRoomCode(roomFromUrl.toUpperCase());
+        }
+    }, []);
 
     // Socket event listeners
     useEffect(() => {
@@ -88,7 +102,13 @@ function LobbyScreen() {
 
         setError('');
         setIsLoading(true);
-        socket.emit('createRoom');
+
+        // Oda ayarlarını gönder
+        socket.emit('createRoom', {
+            password: roomPassword || null,
+            participantLimit: participantLimit,
+            waitingRoomEnabled: waitingRoomEnabled
+        });
     };
 
     const handleJoinRoom = (e) => {

@@ -67,9 +67,10 @@ class RoomService {
   /**
    * Yeni oda oluşturur
    * @param {string} creatorSocketId - Oda oluşturan socket ID
+   * @param {Object} options - Oda ayarları { password, participantLimit, waitingRoomEnabled }
    * @returns {Object} Oluşturulan oda
    */
-  createRoom(creatorSocketId) {
+  createRoom(creatorSocketId, options = {}) {
     const code = this.generateRoomCode();
     const now = new Date();
 
@@ -80,14 +81,20 @@ class RoomService {
       votedClients: {},    // { socketId: profileId }
       socketToProfile: {}, // { socketId: profileId } - kim hangi profili oluşturdu
       isVotingEnded: false,
+      isVotingStarted: false, // Host kontrol: oylama başladı mı?
       createdAt: now,
       lastActivity: now,
       participants: new Set([creatorSocketId]),
-      creatorSocketId: creatorSocketId
+      creatorSocketId: creatorSocketId,
+      // Yeni özellikler
+      password: options.password || null,
+      participantLimit: options.participantLimit || MAX_PARTICIPANTS_PER_ROOM,
+      waitingRoomEnabled: options.waitingRoomEnabled || false,
+      pendingParticipants: new Set(), // Onay bekleyenler
     };
 
     this.rooms.set(code, room);
-    console.log(`[Room] Yeni oda oluşturuldu: ${code}`);
+    console.log(`[Room] Yeni oda oluşturuldu: ${code}${room.password ? ' (şifreli)' : ''}`);
 
     return room;
   }
@@ -96,21 +103,34 @@ class RoomService {
    * Odaya katıl
    * @param {string} roomCode - Oda kodu
    * @param {string} socketId - Katılan socket ID
+   * @param {string} password - Oda şifresi (varsa)
    * @returns {Object|null} Oda veya null veya hata objesi
    */
-  joinRoom(roomCode, socketId) {
+  joinRoom(roomCode, socketId, password = null) {
     const room = this.rooms.get(roomCode.toUpperCase());
 
     if (!room) {
       return { error: 'Oda bulunamadı. Kodu kontrol edin.' };
     }
 
+    // Şifre kontrolü
+    if (room.password && room.password !== password) {
+      return { error: 'Yanlış oda şifresi.', requiresPassword: true };
+    }
+
     if (room.isVotingEnded) {
       return { error: 'Bu odada oylama zaten bitmiş. Yeni bir oda oluşturun.' };
     }
 
-    if (room.participants.size >= MAX_PARTICIPANTS_PER_ROOM) {
-      return { error: `Oda maksimum katılımcı sayısına ulaştı (${MAX_PARTICIPANTS_PER_ROOM}).` };
+    if (room.participants.size >= room.participantLimit) {
+      return { error: `Oda maksimum katılımcı sayısına ulaştı (${room.participantLimit}).` };
+    }
+
+    // Bekleme odası aktifse
+    if (room.waitingRoomEnabled && room.creatorSocketId !== socketId) {
+      room.pendingParticipants.add(socketId);
+      console.log(`[Room ${roomCode}] Katılım onayı bekleniyor: ${socketId}`);
+      return { error: null, pending: true, code: roomCode.toUpperCase() };
     }
 
     room.participants.add(socketId);
@@ -118,6 +138,92 @@ class RoomService {
     console.log(`[Room ${roomCode}] Yeni katılımcı: ${socketId}, Toplam: ${room.participants.size}`);
 
     return room;
+  }
+
+  /**
+   * Bekleme odasındaki katılımcıyı onayla
+   * @param {string} roomCode - Oda kodu
+   * @param {string} hostSocketId - Host socket ID
+   * @param {string} pendingSocketId - Onaylanacak socket ID
+   * @returns {Object} Sonuç
+   */
+  approveParticipant(roomCode, hostSocketId, pendingSocketId) {
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      return { error: 'Oda bulunamadı' };
+    }
+
+    if (room.creatorSocketId !== hostSocketId) {
+      return { error: 'Sadece oda sahibi katılımcı onaylayabilir' };
+    }
+
+    if (!room.pendingParticipants.has(pendingSocketId)) {
+      return { error: 'Bekleyen katılımcı bulunamadı' };
+    }
+
+    room.pendingParticipants.delete(pendingSocketId);
+    room.participants.add(pendingSocketId);
+    this.updateRoomActivity(roomCode);
+
+    return { success: true };
+  }
+
+  /**
+   * Bekleme odasındaki katılımcıyı reddet
+   * @param {string} roomCode - Oda kodu
+   * @param {string} hostSocketId - Host socket ID
+   * @param {string} pendingSocketId - Reddedilecek socket ID
+   * @returns {Object} Sonuç
+   */
+  rejectParticipant(roomCode, hostSocketId, pendingSocketId) {
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      return { error: 'Oda bulunamadı' };
+    }
+
+    if (room.creatorSocketId !== hostSocketId) {
+      return { error: 'Sadece oda sahibi katılımcı reddedebilir' };
+    }
+
+    room.pendingParticipants.delete(pendingSocketId);
+    return { success: true };
+  }
+
+  /**
+   * Oylamayı başlat (Host kontrolü)
+   * @param {string} roomCode - Oda kodu  
+   * @param {string} hostSocketId - Host socket ID
+   * @returns {Object} Sonuç
+   */
+  startVoting(roomCode, hostSocketId) {
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      return { error: 'Oda bulunamadı' };
+    }
+
+    if (room.creatorSocketId !== hostSocketId) {
+      return { error: 'Sadece oda sahibi oylamayı başlatabilir' };
+    }
+
+    if (room.profiles.length < MIN_PROFILES_FOR_VOTING) {
+      return { error: `Oylama için en az ${MIN_PROFILES_FOR_VOTING} katılımcı gerekli` };
+    }
+
+    room.isVotingStarted = true;
+    this.updateRoomActivity(roomCode);
+
+    return { success: true };
+  }
+
+  /**
+   * Kullanıcı host mu kontrol et
+   * @param {string} roomCode - Oda kodu
+   * @param {string} socketId - Socket ID
+   * @returns {boolean}
+   */
+  isHost(roomCode, socketId) {
+    const room = this.rooms.get(roomCode);
+    return room ? room.creatorSocketId === socketId : false;
   }
 
   /**

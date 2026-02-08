@@ -29,14 +29,18 @@ class SocketHandlers {
    * @param {Socket} socket - Socket instance
    */
   registerEventHandlers(socket) {
-    // Oda oluşturma
-    socket.on('createRoom', () => {
-      this.handleCreateRoom(socket);
+    // Oda oluşturma (options ile)
+    socket.on('createRoom', (options) => {
+      this.handleCreateRoom(socket, options);
     });
 
-    // Odaya katılma
-    socket.on('joinRoom', (roomCode) => {
-      this.handleJoinRoom(socket, roomCode);
+    // Odaya katılma (password ile)
+    socket.on('joinRoom', (data) => {
+      if (typeof data === 'string') {
+        this.handleJoinRoom(socket, data, null);
+      } else {
+        this.handleJoinRoom(socket, data.roomCode, data.password);
+      }
     });
 
     // Profil oluşturma
@@ -73,15 +77,38 @@ class SocketHandlers {
     socket.on('disconnect', () => {
       this.handleDisconnect(socket);
     });
+
+    // === YENİ EVENT'LER ===
+
+    // Chat mesajı gönderme
+    socket.on('sendMessage', (data) => {
+      this.handleSendMessage(socket, data);
+    });
+
+    // Host: Oylamayı başlat
+    socket.on('startVoting', () => {
+      this.handleStartVoting(socket);
+    });
+
+    // Host: Katılımcı onayla
+    socket.on('approveParticipant', (data) => {
+      this.handleApproveParticipant(socket, data);
+    });
+
+    // Host: Katılımcı reddet
+    socket.on('rejectParticipant', (data) => {
+      this.handleRejectParticipant(socket, data);
+    });
   }
 
   /**
    * Oda oluşturma event handler'ı
    * @param {Socket} socket - Socket instance
+   * @param {Object} options - { password, participantLimit, waitingRoomEnabled }
    */
-  handleCreateRoom(socket) {
+  handleCreateRoom(socket, options = {}) {
     try {
-      const room = this.roomService.createRoom(socket.id);
+      const room = this.roomService.createRoom(socket.id, options);
 
       // Socket.IO room'una katıl
       socket.join(room.code);
@@ -92,6 +119,10 @@ class SocketHandlers {
       socket.emit('roomCreated', {
         code: room.code,
         message: 'Oda başarıyla oluşturuldu!',
+        hasPassword: !!room.password,
+        participantLimit: room.participantLimit,
+        waitingRoomEnabled: room.waitingRoomEnabled,
+        isHost: true,
         stats: this.roomService.getRoomStats(room.code)
       });
     } catch (error) {
@@ -104,8 +135,9 @@ class SocketHandlers {
    * Odaya katılma event handler'ı
    * @param {Socket} socket - Socket instance
    * @param {string} roomCode - Oda kodu
+   * @param {string} password - Oda şifresi
    */
-  handleJoinRoom(socket, roomCode) {
+  handleJoinRoom(socket, roomCode, password = null) {
     try {
       if (!roomCode || typeof roomCode !== 'string') {
         socket.emit('error', 'Geçersiz oda kodu.');
@@ -118,15 +150,38 @@ class SocketHandlers {
         return;
       }
 
-      const result = this.roomService.joinRoom(trimmedCode, socket.id);
+      const result = this.roomService.joinRoom(trimmedCode, socket.id, password);
 
       if (!result) {
         socket.emit('error', 'Oda bulunamadı. Kodu kontrol edin.');
         return;
       }
 
+      // Şifre gerekli ama verilmemiş
+      if (result.requiresPassword) {
+        socket.emit('passwordRequired', { code: trimmedCode });
+        return;
+      }
+
       if (result.error) {
         socket.emit('error', result.error);
+        return;
+      }
+
+      // Bekleme odasında
+      if (result.pending) {
+        socket.emit('waitingForApproval', {
+          code: result.code,
+          message: 'Host onayı bekleniyor...'
+        });
+        // Host'a haber ver
+        const room = this.roomService.getRoom(result.code);
+        if (room) {
+          this.io.to(room.creatorSocketId).emit('participantPending', {
+            socketId: socket.id,
+            message: 'Yeni katılımcı onay bekliyor'
+          });
+        }
         return;
       }
 
@@ -136,11 +191,15 @@ class SocketHandlers {
 
       console.log(`[${socket.id}] Odaya katıldı: ${result.code}`);
 
+      const isHost = this.roomService.isHost(result.code, socket.id);
+
       // Mevcut profilleri ve oyları gönder
       socket.emit('roomJoined', {
         code: result.code,
         profiles: result.profiles,
         votes: result.votes,
+        isHost: isHost,
+        isVotingStarted: result.isVotingStarted,
         stats: this.roomService.getRoomStats(result.code),
         message: 'Odaya başarıyla katıldınız!'
       });
@@ -414,6 +473,170 @@ class SocketHandlers {
       console.log(`[${socket.id}] Kullanıcı ayrıldı.`);
     } catch (error) {
       console.error(`[${socket.id}] Disconnect hatası:`, error);
+    }
+  }
+
+  /**
+   * Chat mesajı gönderme handler'ı
+   * @param {Socket} socket - Socket instance
+   * @param {Object} data - { message }
+   */
+  handleSendMessage(socket, data) {
+    try {
+      const roomCode = this.socketRooms.get(socket.id);
+
+      if (!roomCode) {
+        socket.emit('error', 'Bir odada değilsiniz.');
+        return;
+      }
+
+      if (!data || !data.message || !data.message.trim()) {
+        return; // Boş mesaj göndermeyi sessizce yoksay
+      }
+
+      const message = data.message.trim().substring(0, 500); // Max 500 karakter
+      const room = this.roomService.getRoom(roomCode);
+      const profileId = room?.socketToProfile?.[socket.id];
+      const profile = room?.profiles?.find(p => p.id === profileId);
+
+      const chatMessage = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        message,
+        senderName: profile?.name || 'Anonim',
+        senderId: socket.id,
+        timestamp: new Date().toISOString()
+      };
+
+      // Odadaki herkese gönder
+      this.io.to(roomCode).emit('chatMessage', chatMessage);
+
+      console.log(`[Room ${roomCode}] Chat: ${chatMessage.senderName}: ${message.substring(0, 30)}...`);
+    } catch (error) {
+      console.error(`[${socket.id}] Chat hatası:`, error);
+    }
+  }
+
+  /**
+   * Oylamayı başlat handler'ı (Host kontrolü)
+   * @param {Socket} socket - Socket instance
+   */
+  handleStartVoting(socket) {
+    try {
+      const roomCode = this.socketRooms.get(socket.id);
+
+      if (!roomCode) {
+        socket.emit('error', 'Bir odada değilsiniz.');
+        return;
+      }
+
+      const result = this.roomService.startVoting(roomCode, socket.id);
+
+      if (result.error) {
+        socket.emit('error', result.error);
+        return;
+      }
+
+      console.log(`[Room ${roomCode}] Oylama başlatıldı.`);
+
+      // Odadaki herkese oylama başladı bildir
+      this.io.to(roomCode).emit('votingStarted', {
+        message: 'Oylama başladı!'
+      });
+
+      this.broadcastRoomStats(roomCode);
+    } catch (error) {
+      console.error(`[${socket.id}] Oylama başlatma hatası:`, error);
+      socket.emit('error', 'Oylama başlatılırken bir hata oluştu.');
+    }
+  }
+
+  /**
+   * Katılımcı onaylama handler'ı (Host kontrolü)
+   * @param {Socket} socket - Socket instance
+   * @param {Object} data - { socketId }
+   */
+  handleApproveParticipant(socket, data) {
+    try {
+      const roomCode = this.socketRooms.get(socket.id);
+
+      if (!roomCode) {
+        socket.emit('error', 'Bir odada değilsiniz.');
+        return;
+      }
+
+      const result = this.roomService.approveParticipant(roomCode, socket.id, data.socketId);
+
+      if (result.error) {
+        socket.emit('error', result.error);
+        return;
+      }
+
+      // Onaylanan kişiyi odaya ekle
+      const targetSocket = this.io.sockets.sockets.get(data.socketId);
+      if (targetSocket) {
+        targetSocket.join(roomCode);
+        this.socketRooms.set(data.socketId, roomCode);
+
+        const room = this.roomService.getRoom(roomCode);
+        targetSocket.emit('roomJoined', {
+          code: roomCode,
+          profiles: room.profiles,
+          votes: room.votes,
+          isHost: false,
+          isVotingStarted: room.isVotingStarted,
+          stats: this.roomService.getRoomStats(roomCode),
+          message: 'Katılım onaylandı!'
+        });
+
+        // Odadaki herkese haber ver
+        this.io.to(roomCode).emit('participantJoined', {
+          participantCount: room.participants.size,
+          message: 'Yeni bir katılımcı odaya katıldı.'
+        });
+
+        this.broadcastRoomStats(roomCode);
+      }
+
+      console.log(`[Room ${roomCode}] Katılımcı onaylandı: ${data.socketId}`);
+    } catch (error) {
+      console.error(`[${socket.id}] Katılımcı onaylama hatası:`, error);
+      socket.emit('error', 'Katılımcı onaylanırken bir hata oluştu.');
+    }
+  }
+
+  /**
+   * Katılımcı reddetme handler'ı (Host kontrolü)
+   * @param {Socket} socket - Socket instance
+   * @param {Object} data - { socketId }
+   */
+  handleRejectParticipant(socket, data) {
+    try {
+      const roomCode = this.socketRooms.get(socket.id);
+
+      if (!roomCode) {
+        socket.emit('error', 'Bir odada değilsiniz.');
+        return;
+      }
+
+      const result = this.roomService.rejectParticipant(roomCode, socket.id, data.socketId);
+
+      if (result.error) {
+        socket.emit('error', result.error);
+        return;
+      }
+
+      // Reddedilen kişiye haber ver
+      const targetSocket = this.io.sockets.sockets.get(data.socketId);
+      if (targetSocket) {
+        targetSocket.emit('joinRejected', {
+          message: 'Katılım talebiniz reddedildi.'
+        });
+      }
+
+      console.log(`[Room ${roomCode}] Katılımcı reddedildi: ${data.socketId}`);
+    } catch (error) {
+      console.error(`[${socket.id}] Katılımcı reddetme hatası:`, error);
+      socket.emit('error', 'Katılımcı reddedilirken bir hata oluştu.');
     }
   }
 }

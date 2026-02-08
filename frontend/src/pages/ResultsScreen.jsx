@@ -9,6 +9,7 @@ import { useAppState, ACTION_TYPES, APP_STATES } from '../contexts/AppStateConte
 import socketService from '../services/socketService';
 import confetti from 'canvas-confetti';
 import { playSound } from '../utils/sound';
+import { exportToCSV, exportToText } from '../utils/ExportUtils';
 
 function ResultsScreen() {
   const { state, dispatch } = useAppState();
@@ -169,7 +170,7 @@ function ResultsScreen() {
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+        <div className="flex flex-col sm:flex-row gap-4 justify-center mb-4">
           <button
             onClick={handleNewVoting}
             className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-8 rounded-xl transition-colors duration-200 shadow-lg hover:shadow-xl"
@@ -181,6 +182,22 @@ function ResultsScreen() {
             className="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-xl transition-colors duration-200"
           >
             🚪 Odadan Ayrıl
+          </button>
+        </div>
+
+        {/* Export Buttons */}
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <button
+            onClick={() => exportToCSV(results, state.profiles)}
+            className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-xl transition-colors duration-200 text-sm"
+          >
+            📄 CSV İndir
+          </button>
+          <button
+            onClick={() => exportToText(results, state.profiles)}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-xl transition-colors duration-200 text-sm"
+          >
+            📝 Rapor İndir
           </button>
         </div>
 

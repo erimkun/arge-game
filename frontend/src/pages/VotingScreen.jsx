@@ -14,6 +14,8 @@ import { OrbitControls, Environment } from '@react-three/drei';
 import CharacterModel from '../components/carousel/CharacterModel';
 import confetti from 'canvas-confetti';
 import { playSound } from '../utils/sound';
+import SandEffect from '../components/effects/SandEffect';
+import ChatPanel from '../components/ChatPanel';
 
 function VotingScreen() {
   const { state, dispatch } = useAppState();
@@ -24,6 +26,7 @@ function VotingScreen() {
   const [activeProfile, setActiveProfile] = useState(null);
   const [copied, setCopied] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const socket = socketService.getSocket();
   const myProfile = state.myProfile;
@@ -181,8 +184,21 @@ function VotingScreen() {
 
       {/* Tek başına bekleme durumu */}
       {otherProfiles.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="glass-card rounded-3xl p-10 text-center max-w-lg relative overflow-hidden animate-float">
+        <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
+          {/* Background Sand Effect */}
+          <div className="absolute inset-0 z-0">
+            <Canvas
+              shadows
+              camera={{ position: [0, 0, 5], fov: 75 }}
+              className="w-full h-full"
+            >
+              <ambientLight intensity={0.5} />
+              <directionalLight position={[10, 10, 5]} intensity={1} />
+              <SandEffect />
+            </Canvas>
+          </div>
+
+          <div className="glass-card rounded-3xl p-10 text-center max-w-lg relative overflow-hidden animate-float z-10 backdrop-blur-md bg-white/10 border-white/20">
             {/* Bekleme animasyonu */}
             <div className="flex justify-center mb-6">
               <div className="relative">
@@ -389,6 +405,9 @@ function VotingScreen() {
           </div>
         </div>
       )}
+
+      {/* Chat Panel */}
+      <ChatPanel isOpen={isChatOpen} onToggle={() => setIsChatOpen(!isChatOpen)} />
     </>
   );
 }

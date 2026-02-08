@@ -5,12 +5,15 @@
  * Negatif senaryoları UI'a bildirir
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import socketService from '../services/socketService';
 import { useAppState, ACTION_TYPES, APP_STATES } from '../contexts/AppStateContext';
 import { AVATARS } from '../utils/avatars';
 
-export function useSocket() {
+export function useSocket(props = {}) {
+  // Default prop: listenToGlobalEvents = true
+  const listenToGlobalEvents = props.listenToGlobalEvents !== false;
+
   const { state, dispatch } = useAppState();
   const socketRef = useRef(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
@@ -26,7 +29,7 @@ export function useSocket() {
     return map;
   }, []);
 
-  const enrichProfile = (profile) => {
+  const enrichProfile = useCallback((profile) => {
     if (!profile) return profile;
     if (profile.model) return profile;
 
@@ -39,123 +42,138 @@ export function useSocket() {
       ...profile,
       model: matchedAvatar.model,
     };
-  };
+  }, [avatarLookup]);
 
   useEffect(() => {
     // Socket bağlantısını başlat
     const socket = socketService.connect();
     socketRef.current = socket;
 
-    // Bağlantı event'leri
-    socket.on('connect', () => {
+    // ----- HANDLERS -----
+
+    // Bağlantı Handler'ları
+    const handleConnect = () => {
       console.log('Socket bağlantısı kuruldu:', socket.id);
       setConnectionStatus('connected');
       setLastError(null);
-    });
+    };
 
-    socket.on('disconnect', (reason) => {
+    const handleDisconnect = (reason) => {
       console.log('Socket bağlantısı kesildi:', reason);
       setConnectionStatus('disconnected');
-    });
+    };
 
-    socket.on('connect_error', (error) => {
+    const handleConnectError = (error) => {
       console.error('Socket bağlantı hatası:', error);
       setConnectionStatus('error');
       setLastError('Sunucuya bağlanılamıyor. Lütfen internet bağlantınızı kontrol edin.');
-    });
+    };
 
-    // Profil event'leri
-    socket.on('profileAdded', (profile) => {
+    const handleError = (errorMessage) => {
+      console.error('Socket hatası:', errorMessage);
+      setLastError(errorMessage);
+      setTimeout(() => setLastError(null), 5000);
+    };
+
+    // Global Game Logic Handler'ları
+    const handleProfileAdded = (profile) => {
       const hydrated = enrichProfile(profile);
       dispatch({ type: ACTION_TYPES.ADD_PROFILE, payload: hydrated });
       dispatch({
         type: ACTION_TYPES.UPDATE_VOTE,
         payload: { profileId: hydrated.id, count: 0 }
       });
-    });
+    };
 
-    // Profiller güncellendi (birisi ayrıldığında)
-    socket.on('profilesUpdated', (profiles) => {
+    const handleProfilesUpdated = (profiles) => {
       const hydratedProfiles = profiles.map(enrichProfile);
       dispatch({ type: ACTION_TYPES.SET_PROFILES, payload: hydratedProfiles });
-    });
+    };
 
-    // Oy event'leri
-    socket.on('voteUpdate', ({ profileId, count }) => {
+    const handleVoteUpdate = ({ profileId, count }) => {
       dispatch({
         type: ACTION_TYPES.UPDATE_VOTE,
         payload: { profileId, count }
       });
-    });
+    };
 
-    // Oy onayı
-    socket.on('voteConfirmed', (data) => {
+    const handleVoteConfirmed = (data) => {
       console.log('Oy onaylandı:', data.message);
-    });
+    };
 
-    // Oda istatistikleri
-    socket.on('roomStats', (stats) => {
+    const handleRoomStats = (stats) => {
       dispatch({ type: ACTION_TYPES.SET_ROOM_STATS, payload: stats });
-    });
+    };
 
-    // Sonuç event'i
-    socket.on('votingEnded', (results) => {
+    const handleVotingEnded = (results) => {
       dispatch({ type: ACTION_TYPES.SET_RESULTS, payload: results });
-    });
+    };
 
-    // Oda sıfırlama event'i
-    socket.on('roomReset', (data) => {
+    const handleRoomReset = (data) => {
       console.log('Oda sıfırlandı:', data.message);
       dispatch({ type: ACTION_TYPES.RESET });
       if (data.stats) {
         dispatch({ type: ACTION_TYPES.SET_ROOM_STATS, payload: data.stats });
       }
-    });
+    };
 
-    // Odadan ayrılma event'i
-    socket.on('leftRoom', () => {
+    const handleLeftRoom = () => {
       console.log('Odadan ayrıldı');
       dispatch({ type: ACTION_TYPES.LEAVE_ROOM });
-    });
-
-    // Katılımcı ayrıldı event'i
-    socket.on('participantLeft', (data) => {
-      console.log('Bir katılımcı ayrıldı:', data.message);
-      // Toast notification gösterilebilir
-    });
-
-    // Katılımcı katıldı event'i
-    socket.on('participantJoined', (data) => {
-      console.log('Yeni katılımcı:', data.message);
-      // Toast notification gösterilebilir
-    });
-
-    // Hata event'i
-    socket.on('error', (errorMessage) => {
-      console.error('Socket hatası:', errorMessage);
-      setLastError(errorMessage);
-      // 5 saniye sonra hatayı temizle
-      setTimeout(() => setLastError(null), 5000);
-    });
-
-    // Cleanup
-    return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('connect_error');
-      socket.off('profileAdded');
-      socket.off('profilesUpdated');
-      socket.off('voteUpdate');
-      socket.off('voteConfirmed');
-      socket.off('roomStats');
-      socket.off('votingEnded');
-      socket.off('roomReset');
-      socket.off('leftRoom');
-      socket.off('participantLeft');
-      socket.off('participantJoined');
-      socket.off('error');
     };
-  }, [dispatch]);
+
+    const handleParticipantLeft = (data) => {
+      console.log('Bir katılımcı ayrıldı:', data.message);
+    };
+
+    const handleParticipantJoined = (data) => {
+      console.log('Yeni katılımcı:', data.message);
+    };
+
+    // ----- LISTENERS REGISTRATION -----
+
+    // Her zaman dinle (Connection Status)
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
+    socket.on('error', handleError);
+
+    // Global event'ler opsiyonel
+    if (listenToGlobalEvents) {
+      socket.on('profileAdded', handleProfileAdded);
+      socket.on('profilesUpdated', handleProfilesUpdated);
+      socket.on('voteUpdate', handleVoteUpdate);
+      socket.on('voteConfirmed', handleVoteConfirmed);
+      socket.on('roomStats', handleRoomStats);
+      socket.on('votingEnded', handleVotingEnded);
+      socket.on('roomReset', handleRoomReset);
+      socket.on('leftRoom', handleLeftRoom);
+      socket.on('participantLeft', handleParticipantLeft);
+      socket.on('participantJoined', handleParticipantJoined);
+    }
+
+    // ----- CLEANUP -----
+    return () => {
+      // Spesifik handler'ları kaldır (Diğer listener'ları etkilemez)
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
+      socket.off('error', handleError);
+
+      if (listenToGlobalEvents) {
+        socket.off('profileAdded', handleProfileAdded);
+        socket.off('profilesUpdated', handleProfilesUpdated);
+        socket.off('voteUpdate', handleVoteUpdate);
+        socket.off('voteConfirmed', handleVoteConfirmed);
+        socket.off('roomStats', handleRoomStats);
+        socket.off('votingEnded', handleVotingEnded);
+        socket.off('roomReset', handleRoomReset);
+        socket.off('leftRoom', handleLeftRoom);
+        socket.off('participantLeft', handleParticipantLeft);
+        socket.off('participantJoined', handleParticipantJoined);
+      }
+    };
+  }, [dispatch, enrichProfile, listenToGlobalEvents]);
 
   return {
     socket: socketRef.current,

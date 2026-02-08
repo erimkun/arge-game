@@ -54,14 +54,16 @@ io.on('connection', (socket) => {
   socketHandlers.handleConnection(socket);
 });
 
-// Sunucuyu başlat
-server.listen(config.port, config.host, () => {
-  console.log(`\n🚀 Backend sunucusu başlatıldı!`);
-  console.log(`📍 Yerel: http://localhost:${config.port}`);
-  console.log(`🌐 Ağ: http://[LAN_IP_ADRESİNİZ]:${config.port}`);
-  console.log(`🏠 Oda sistemi aktif!`);
-  console.log(`\n✅ Sunucu hazır ve dinliyor...\n`);
-});
+// Sunucuyu başlat (Sadece doğrudan çalıştırıldığında)
+if (require.main === module) {
+  server.listen(config.port, config.host, () => {
+    console.log(`\n🚀 Backend sunucusu başlatıldı!`);
+    console.log(`📍 Yerel: http://localhost:${config.port}`);
+    console.log(`🌐 Ağ: http://[LAN_IP_ADRESİNİZ]:${config.port}`);
+    console.log(`🏠 Oda sistemi aktif!`);
+    console.log(`\n✅ Sunucu hazır ve dinliyor...\n`);
+  });
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
